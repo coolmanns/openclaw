@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   applyXaiModelCompat,
@@ -11,7 +11,6 @@ import {
 } from "../plugin-sdk/provider-tools.js";
 import "./test-helpers/fast-bash-tools.js";
 import "./test-helpers/fast-coding-tools.js";
-import "./test-helpers/fast-openclaw-tools.js";
 import { createOpenClawCodingTools } from "./pi-tools.js";
 import { createHostSandboxFsBridge } from "./test-helpers/host-sandbox-fs-bridge.js";
 import { expectReadWriteEditTools } from "./test-helpers/pi-tools-fs-helpers.js";
@@ -19,6 +18,73 @@ import { createPiToolsSandboxContext } from "./test-helpers/pi-tools-sandbox-con
 import { providerAliasCases } from "./test-helpers/provider-alias-cases.js";
 import { buildEmptyExplicitToolAllowlistError } from "./tool-allowlist-guard.js";
 import { normalizeToolName } from "./tool-policy.js";
+
+const openClawToolsMockState = vi.hoisted(() => ({
+  calls: [] as unknown[],
+}));
+
+vi.mock("./openclaw-tools.js", () => {
+  const stubTool = (name: string) => ({
+    name,
+    label: name,
+    description: `${name} tool`,
+    parameters: { type: "object" as const, properties: {} },
+    execute: async () => ({ content: [{ type: "text" as const, text: "ok" }] }),
+  });
+  const stubActionTool = (name: string, actions: string[]) => ({
+    ...stubTool(name),
+    parameters: {
+      type: "object" as const,
+      properties: { action: { type: "string" as const, enum: actions } },
+      required: ["action"],
+    },
+  });
+  const coreTools = [
+    stubActionTool("canvas", ["create", "read"]),
+    stubActionTool("nodes", ["list", "invoke"]),
+    stubActionTool("cron", ["schedule", "cancel"]),
+    stubActionTool("message", ["send", "reply"]),
+    stubActionTool("gateway", [
+      "restart",
+      "config.get",
+      "config.schema.lookup",
+      "config.apply",
+      "config.patch",
+      "update.run",
+    ]),
+    stubActionTool("agents_list", ["list", "show"]),
+    stubActionTool("sessions_list", ["list", "show"]),
+    stubActionTool("sessions_history", ["read", "tail"]),
+    stubActionTool("sessions_send", ["send", "reply"]),
+    stubActionTool("sessions_spawn", ["spawn", "handoff"]),
+    stubActionTool("subagents", ["list", "show"]),
+    stubActionTool("session_status", ["get", "show"]),
+    stubActionTool("browser", ["status", "snapshot"]),
+    stubTool("tts"),
+    stubTool("image_generate"),
+    stubTool("video_generate"),
+    stubTool("web_fetch"),
+    stubTool("image"),
+    stubTool("pdf"),
+  ];
+  return {
+    createOpenClawTools: (options?: unknown) => {
+      openClawToolsMockState.calls.push(options);
+      return coreTools.map((tool) => Object.assign({}, tool));
+    },
+    __testing: {
+      setDepsForTest: () => {},
+    },
+  };
+});
+
+function resetCreateOpenClawToolsCalls() {
+  openClawToolsMockState.calls.length = 0;
+}
+
+function getCreateOpenClawToolsCalls() {
+  return [...openClawToolsMockState.calls];
+}
 
 const tinyPngBuffer = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2f7z8AAAAASUVORK5CYII=",
@@ -463,6 +529,44 @@ describe("createOpenClawCodingTools", () => {
       } as OpenClawConfig,
     });
     expect(profileStageAlsoAllow.some((tool) => tool.name === "browser")).toBe(true);
+  });
+
+  it("forwards agent alsoAllow plugin tools into plugin discovery for the matching worker only", () => {
+    const config = {
+      tools: { profile: "messaging" },
+      agents: {
+        list: [
+          {
+            id: "dennis-ritchie",
+            tools: { profile: "coding", alsoAllow: ["gbrain_readonly"] },
+          },
+          {
+            id: "herbert-karajan",
+            tools: { profile: "coding" },
+          },
+        ],
+      },
+    } as OpenClawConfig;
+
+    resetCreateOpenClawToolsCalls();
+    createOpenClawCodingTools({
+      sessionKey: "agent:dennis-ritchie:subagent:test",
+      config,
+    });
+    const dennisOptions = getCreateOpenClawToolsCalls().at(-1) as
+      | { pluginToolAllowlist?: string[] }
+      | undefined;
+    expect(dennisOptions?.pluginToolAllowlist).toContain("gbrain_readonly");
+
+    resetCreateOpenClawToolsCalls();
+    createOpenClawCodingTools({
+      sessionKey: "agent:herbert-karajan:subagent:test",
+      config,
+    });
+    const herbertOptions = getCreateOpenClawToolsCalls().at(-1) as
+      | { pluginToolAllowlist?: string[] }
+      | undefined;
+    expect(herbertOptions?.pluginToolAllowlist).not.toContain("gbrain_readonly");
   });
 
   it("can keep message available when a cron route needs it under the coding profile", () => {
