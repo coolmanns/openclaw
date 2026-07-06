@@ -7,6 +7,41 @@ import type { CodexAppServerStartOptions } from "./config.js";
 import type { CodexAppServerTransport } from "./transport.js";
 
 const UNSAFE_ENVIRONMENT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const ALLOWED_INHERITED_ENVIRONMENT_KEYS = new Set([
+  "APPDATA",
+  "CI",
+  "COLORTERM",
+  "COMSPEC",
+  "FORCE_COLOR",
+  "HOME",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOCALAPPDATA",
+  "LOGNAME",
+  "NODE_ENV",
+  "PATH",
+  "PATHEXT",
+  "PROCESSOR_ARCHITECTURE",
+  "PROGRAMDATA",
+  "PROGRAMFILES",
+  "PROGRAMFILES(X86)",
+  "SHELL",
+  "SYSTEMDRIVE",
+  "SYSTEMROOT",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "USER",
+  "USERPROFILE",
+  "WINDIR",
+  "XDG_RUNTIME_DIR",
+]);
+const CREDENTIAL_ENVIRONMENT_KEY_RE =
+  /(^|_)(API_?KEY|AUTH|BEARER|COOKIE|CREDENTIALS?|PASSWORD|PASS|PRIVATE_?KEY|SECRET|SESSION|TOKEN)(_|$)/i;
 
 type CodexAppServerSpawnRuntime = {
   platform: NodeJS.Platform;
@@ -49,8 +84,8 @@ export function resolveCodexAppServerSpawnEnv(
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
   const env = Object.create(null) as NodeJS.ProcessEnv;
-  copySafeEnvironmentEntries(env, baseEnv);
-  copySafeEnvironmentEntries(env, options.env ?? {});
+  copyAllowedInheritedEnvironmentEntries(env, baseEnv, platform);
+  copyExplicitEnvironmentEntries(env, options.env ?? {});
   const keysToClear = normalizedEnvironmentKeys(options.clearEnv ?? []);
   if (platform === "win32") {
     const lowerCaseKeysToClear = new Set(keysToClear.map((key) => key.toLowerCase()));
@@ -78,16 +113,41 @@ function normalizedEnvironmentKeys(rawKeys: readonly string[]): string[] {
   return keys;
 }
 
-function copySafeEnvironmentEntries(
+function copyAllowedInheritedEnvironmentEntries(
   target: NodeJS.ProcessEnv,
   source: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  platform: NodeJS.Platform,
 ): void {
   for (const [key, value] of Object.entries(source)) {
-    if (UNSAFE_ENVIRONMENT_KEYS.has(key)) {
+    if (!isSafeEnvironmentEntry(key) || isCredentialEnvironmentKey(key)) {
+      continue;
+    }
+    const normalizedKey = platform === "win32" ? key.toUpperCase() : key;
+    if (!ALLOWED_INHERITED_ENVIRONMENT_KEYS.has(normalizedKey)) {
       continue;
     }
     target[key] = value;
   }
+}
+
+function copyExplicitEnvironmentEntries(
+  target: NodeJS.ProcessEnv,
+  source: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): void {
+  for (const [key, value] of Object.entries(source)) {
+    if (!isSafeEnvironmentEntry(key) || isCredentialEnvironmentKey(key)) {
+      continue;
+    }
+    target[key] = value;
+  }
+}
+
+function isSafeEnvironmentEntry(key: string): boolean {
+  return !UNSAFE_ENVIRONMENT_KEYS.has(key);
+}
+
+function isCredentialEnvironmentKey(key: string): boolean {
+  return key.toUpperCase().startsWith("SYMPHONY_") || CREDENTIAL_ENVIRONMENT_KEY_RE.test(key);
 }
 
 export function createStdioTransport(options: CodexAppServerStartOptions): CodexAppServerTransport {
