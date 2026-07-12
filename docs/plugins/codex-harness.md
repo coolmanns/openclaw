@@ -510,8 +510,15 @@ For an already-running app-server, use WebSocket transport:
 }
 ```
 
-Stdio app-server launches inherit OpenClaw's process environment by default,
-but OpenClaw owns the Codex app-server account bridge. Auth is selected in this
+Stdio app-server launches use an explicit process environment instead of
+inheriting the whole Gateway or runner environment. OpenClaw keeps only a small
+runtime allowlist such as `HOME`, `PATH`, temp-directory variables, locale
+variables, and Windows process basics, then adds explicit non-secret overrides
+such as `CODEX_HOME`. `SYMPHONY_*` and credential-shaped names such as
+`*_API_KEY`, `*_TOKEN`, and `*_SECRET` are removed before the app-server child
+process starts.
+
+OpenClaw owns the Codex app-server account bridge. Auth is selected in this
 order:
 
 1. An explicit OpenClaw Codex auth profile for the agent.
@@ -520,14 +527,13 @@ order:
    `OPENAI_API_KEY`, when no app-server account is present and OpenAI auth is
    still required.
 
-When OpenClaw sees a ChatGPT subscription-style Codex auth profile, it removes
-`CODEX_API_KEY` and `OPENAI_API_KEY` from the spawned Codex child process. That
-keeps Gateway-level API keys available for embeddings or direct OpenAI models
-without making native Codex app-server turns bill through the API by accident.
-Explicit Codex API-key profiles and local stdio env-key fallback use app-server
-login instead of inherited child-process env. WebSocket app-server connections
-do not receive Gateway env API-key fallback; use an explicit auth profile or the
-remote app-server's own account.
+When OpenClaw sees a ChatGPT subscription-style Codex auth profile, Codex uses
+file-based app-server login state such as the selected `CODEX_HOME` or
+`~/.codex/auth.json`; Gateway-level API keys remain outside the child-process
+environment. Explicit Codex API-key profiles and local stdio env-key fallback
+use app-server login setup instead of inherited child-process env. WebSocket
+app-server connections do not receive Gateway env API-key fallback; use an
+explicit auth profile or the remote app-server's own account.
 
 If a deployment needs additional environment isolation, add those variables to
 `appServer.clearEnv`:
@@ -553,21 +559,21 @@ If a deployment needs additional environment isolation, add those variables to
 
 Supported `appServer` fields:
 
-| Field               | Default                                  | Meaning                                                                                                                             |
-| ------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `transport`         | `"stdio"`                                | `"stdio"` spawns Codex; `"websocket"` connects to `url`.                                                                            |
-| `command`           | managed Codex binary                     | Executable for stdio transport. Leave unset to use the managed binary; set it only for an explicit override.                        |
-| `args`              | `["app-server", "--listen", "stdio://"]` | Arguments for stdio transport.                                                                                                      |
-| `url`               | unset                                    | WebSocket app-server URL.                                                                                                           |
-| `authToken`         | unset                                    | Bearer token for WebSocket transport.                                                                                               |
-| `headers`           | `{}`                                     | Extra WebSocket headers.                                                                                                            |
-| `clearEnv`          | `[]`                                     | Extra environment variable names removed from the spawned stdio app-server process after OpenClaw builds its inherited environment. |
-| `requestTimeoutMs`  | `60000`                                  | Timeout for app-server control-plane calls.                                                                                         |
-| `mode`              | `"yolo"`                                 | Preset for YOLO or guardian-reviewed execution.                                                                                     |
-| `approvalPolicy`    | `"never"`                                | Native Codex approval policy sent to thread start/resume/turn.                                                                      |
-| `sandbox`           | `"danger-full-access"`                   | Native Codex sandbox mode sent to thread start/resume.                                                                              |
-| `approvalsReviewer` | `"user"`                                 | Use `"auto_review"` to let Codex review native approval prompts. `guardian_subagent` remains a legacy alias.                        |
-| `serviceTier`       | unset                                    | Optional Codex app-server service tier: `"fast"`, `"flex"`, or `null`. Invalid legacy values are ignored.                           |
+| Field               | Default                                  | Meaning                                                                                                                                        |
+| ------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `transport`         | `"stdio"`                                | `"stdio"` spawns Codex; `"websocket"` connects to `url`.                                                                                       |
+| `command`           | managed Codex binary                     | Executable for stdio transport. Leave unset to use the managed binary; set it only for an explicit override.                                   |
+| `args`              | `["app-server", "--listen", "stdio://"]` | Arguments for stdio transport.                                                                                                                 |
+| `url`               | unset                                    | WebSocket app-server URL.                                                                                                                      |
+| `authToken`         | unset                                    | Bearer token for WebSocket transport.                                                                                                          |
+| `headers`           | `{}`                                     | Extra WebSocket headers.                                                                                                                       |
+| `clearEnv`          | `[]`                                     | Extra non-secret environment variable names removed from the spawned stdio app-server process after OpenClaw builds its sanitized environment. |
+| `requestTimeoutMs`  | `60000`                                  | Timeout for app-server control-plane calls.                                                                                                    |
+| `mode`              | `"yolo"`                                 | Preset for YOLO or guardian-reviewed execution.                                                                                                |
+| `approvalPolicy`    | `"never"`                                | Native Codex approval policy sent to thread start/resume/turn.                                                                                 |
+| `sandbox`           | `"danger-full-access"`                   | Native Codex sandbox mode sent to thread start/resume.                                                                                         |
+| `approvalsReviewer` | `"user"`                                 | Use `"auto_review"` to let Codex review native approval prompts. `guardian_subagent` remains a legacy alias.                                   |
+| `serviceTier`       | unset                                    | Optional Codex app-server service tier: `"fast"`, `"flex"`, or `null`. Invalid legacy values are ignored.                                      |
 
 OpenClaw-owned dynamic tool calls are bounded independently from
 `appServer.requestTimeoutMs`: each Codex `item/tool/call` request must receive

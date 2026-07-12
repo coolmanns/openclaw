@@ -91,46 +91,81 @@ describe("resolveCodexAppServerSpawnInvocation", () => {
 });
 
 describe("resolveCodexAppServerSpawnEnv", () => {
-  it("applies configured env overrides before clearing denied env vars", () => {
+  it("starts from an inherited runtime allowlist and explicit non-secret overrides", () => {
     expect({
       ...resolveCodexAppServerSpawnEnv(
         {
           env: {
-            OPENAI_API_KEY: "configured-openai-key",
+            CODEX_HOME: "/tmp/codex-home",
             KEEP: "override",
           },
-          clearEnv: ["OPENAI_API_KEY", "CODEX_API_KEY", "MISSING"],
         },
         {
-          OPENAI_API_KEY: "parent-openai-key",
-          CODEX_API_KEY: "parent-codex-key",
-          KEEP: "parent",
+          HOME: "/home/agent",
+          KEEP: "parent-should-not-inherit",
+          PATH: "/usr/bin",
+          TMPDIR: "/tmp",
         },
       ),
     }).toEqual({
+      CODEX_HOME: "/tmp/codex-home",
+      HOME: "/home/agent",
       KEEP: "override",
+      PATH: "/usr/bin",
+      TMPDIR: "/tmp",
     });
   });
 
-  it("clears denied env vars case-insensitively on Windows", () => {
+  it("strips SYMPHONY and credential-named variables from the app-server process env", () => {
     expect({
       ...resolveCodexAppServerSpawnEnv(
         {
           env: {
-            OpenAI_Api_Key: "configured-openai-key",
-            Other: "configured",
+            CODEX_API_KEY: "configured-codex-key",
+            CUSTOM_BEARER_TOKEN: "configured-token",
+            OPENAI_API_KEY: "configured-openai-key",
+            SAFE_FLAG: "configured",
+            SYMPHONY_KANBAN_RUNNER_WRITE_KEY: "configured-board-key",
           },
-          clearEnv: ["OPENAI_API_KEY", " CODEX_API_KEY ", ""],
         },
         {
-          Codex_Api_Key: "parent-codex-key",
-          KEEP: "parent",
+          CODEX_API_KEY: "parent-codex-key",
+          HOME: "/home/agent",
+          OPENAI_API_KEY: "parent-openai-key",
+          PATH: "/usr/bin",
+          SYMPHONY_KANBAN_RUNNER_WRITE_KEY: "parent-board-key",
+          WEBHOOK_SECRET: "parent-webhook-secret",
+        },
+      ),
+    }).toEqual({
+      HOME: "/home/agent",
+      PATH: "/usr/bin",
+      SAFE_FLAG: "configured",
+    });
+  });
+
+  it("clears explicitly denied non-secret env vars case-insensitively on Windows", () => {
+    expect({
+      ...resolveCodexAppServerSpawnEnv(
+        {
+          env: {
+            Other: "configured",
+            Temp_Config: "configured-temp",
+          },
+          clearEnv: ["TEMP_CONFIG", ""],
+        },
+        {
+          Path: "C:\\bin",
+          PATHEXT: ".CMD;.EXE;.BAT",
+          TEMP: "C:\\Temp",
         },
         "win32",
       ),
     }).toEqual({
-      KEEP: "parent",
       Other: "configured",
+      Path: "C:\\bin",
+      PATHEXT: ".CMD;.EXE;.BAT",
+      TEMP: "C:\\Temp",
     });
   });
 
@@ -161,7 +196,6 @@ describe("resolveCodexAppServerSpawnEnv", () => {
 
     expect(Object.getPrototypeOf(env)).toBeNull();
     expect({ ...env }).toEqual({
-      BASE: "1",
       SAFE: "1",
     });
     expect(Object.hasOwn(env, "__proto__")).toBe(false);
